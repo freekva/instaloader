@@ -1,24 +1,26 @@
 Command Line Options
 ====================
 
-The following flags can be given to Instaloader to specify how profiles should
-be downloaded.
+Instaloader is invoked with::
 
-To get a list of all flags, their abbreviations and their descriptions,
-run ``instaloader --help``.
+   $ instaloader [options] target [target ...]
+
+where ``target`` is a ``profile``, a ``"#hashtag"``, ``@profile`` (all profiles
+that *profile* is following), or if logged in ``:feed`` (pictures from your
+feed) or ``:stories`` (stories of your followees).
+
+Here we explain the additional options that can be given to Instaloader to
+customize its behavior.  To get a list of all flags, their abbreviations and
+their descriptions, you may also run ``instaloader --help``.
 
 What to Download
 ^^^^^^^^^^^^^^^^
 
-Specify a list of profiles or #hashtags. For each of these, Instaloader
-creates a folder and downloads all posts along with the pictures's
-captions and the current **profile picture**. If an already-downloaded profile
-has been renamed, Instaloader automatically **finds it by its unique ID** and
-renames the folder likewise.
-
-Instead of a *profile* or a *#hashtag*, the special targets
-``:feed`` (pictures from your feed) and
-``:stories`` (stories of your followees) can be specified.
+Specify a list of targets (profiles, #hashtags, ``:feed`` or ``:stories``). For
+each of these, Instaloader creates a folder and stores all posts along with the
+pictures's captions and the current **profile picture** there. If an
+already-downloaded profile has been renamed, Instaloader automatically **finds
+it by its unique ID** and renames the folder likewise.
 
 .. option:: --profile-pic-only
 
@@ -92,7 +94,7 @@ matching the specified targets.
 .. option:: --count COUNT
 
    Do not attempt to download more than COUNT posts.  Applies only to
-   ``#hashtag``, ``:feed-all`` and ``:feed-liked``.
+   ``#hashtag`` and ``:feed``.
 
 
 Login (Download Private Profiles)
@@ -134,8 +136,11 @@ How to Download
    with ``--dirname-pattern``.  ``{profile}`` is replaced by the profile name,
    ``{target}`` is replaced by the target you specified, i.e.  either ``:feed``,
    ``#hashtag`` or the profile name.  Also, the fields ``{date}`` and
-   ``{shortcode}`` can be specified.  Defaults to ``{date:%Y-%m-%d_%H-%M-%S}``.
-   See :ref:`filename-specification`.
+   ``{shortcode}`` can be specified.  In case of not downloading stories, the
+   attributes of the :class:`.Post` class can be used in addition, e.g.
+   ``{post.owner_id}`` or ``{post.mediaid}``.
+   Defaults to
+   ``{date:%Y-%m-%d_%H-%M-%S}``.  See :ref:`filename-specification`.
 
 .. option:: --user-agent USER_AGENT
 
@@ -145,7 +150,7 @@ How to Download
 .. option:: --max-connection-attempts N
 
    Maximum number of connection attempts until a request is aborted. Defaults
-   to ``3``. If a connection fails, it can by manually skipped by hitting
+   to ``3``. If a connection fails, it can be manually skipped by hitting
    :kbd:`Control-c`. Set this to ``0`` to retry infinitely.
 
 Miscellaneous Options

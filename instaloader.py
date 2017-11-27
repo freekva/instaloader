@@ -29,7 +29,7 @@ import requests.utils
 import urllib3
 
 
-__version__ = '3.1'
+__version__ = '3.2'
 
 
 try:
@@ -126,7 +126,7 @@ def mediaid_to_shortcode(mediaid: int) -> str:
 def format_string_contains_key(format_string: str, key: str) -> bool:
     # pylint:disable=unused-variable
     for literal_text, field_name, format_spec, conversion in string.Formatter().parse(format_string):
-        if field_name == key:
+        if field_name == key or field_name.startswith(key + '.'):
             return True
     return False
 
@@ -176,7 +176,8 @@ class Post:
 
     LOGIN_REQUIRING_PROPERTIES = ["viewer_has_liked"]
 
-    def __init__(self, instaloader: 'Instaloader', node: Dict[str, Any], profile: Optional[str] = None):
+    def __init__(self, instaloader: 'Instaloader', node: Dict[str, Any],
+                 profile: Optional[str] = None, profile_id: Optional[int] = None):
         """Create a Post instance from a node structure as returned by Instagram.
 
         :param instaloader: :class:`Instaloader` instance used for additional queries if neccessary.
@@ -186,6 +187,7 @@ class Post:
         self._instaloader = instaloader
         self._node = node
         self._profile = profile
+        self._profile_id = profile_id
         self._full_metadata_dict = None
 
     @classmethod
@@ -205,6 +207,11 @@ class Post:
     def shortcode(self) -> str:
         """Media shortcode. URL of the post is instagram.com/p/<shortcode>/."""
         return self._node['shortcode'] if 'shortcode' in self._node else self._node['code']
+
+    @property
+    def mediaid(self) -> int:
+        """The mediaid is a decimal representation of the media shortcode."""
+        return int(self._node['id'])
 
     def __repr__(self):
         return '<Post {}>'.format(self.shortcode)
@@ -251,6 +258,13 @@ class Post:
         except (InstaloaderException, KeyError, TypeError) as err:
             self._instaloader.error("Get owner name of {}: {} -- using \'UNKNOWN\'.".format(self, err))
             return 'UNKNOWN'
+
+    @property
+    def owner_id(self) -> int:
+        """The ID of the Post's owner."""
+        if self._profile_id:
+            return self._profile_id
+        return int(self._field('owner', 'id'))
 
     @property
     def date(self) -> datetime:
@@ -701,7 +715,7 @@ class Instaloader:
                      filename_suffix: Optional[str] = None) -> bool:
         """Downloads and saves picture with given url under given directory with given timestamp.
         Returns true, if file was actually downloaded, i.e. updated."""
-        urlmatch = re.search('\\.[a-z]*\\?', url)
+        urlmatch = re.search('\\.[a-z0-9]*\\?', url)
         file_extension = url[-3:] if urlmatch is None else urlmatch.group(0)[1:-1]
         if filename_suffix is not None:
             filename += '_' + filename_suffix
@@ -889,7 +903,8 @@ class Instaloader:
         profilename = post.owner_username if needs_profilename else None
         dirname = self.dirname_pattern.format(profile=profilename, target=target.lower())
         filename = dirname + '/' + self.filename_pattern.format(profile=profilename, target=target.lower(),
-                                                                date=post.date, shortcode=post.shortcode)
+                                                                date=post.date, shortcode=post.shortcode,
+                                                                post=post)
         os.makedirs(os.path.dirname(filename), exist_ok=True)
 
         # Download the image(s) / video thumbnail and videos within sidecars if desired
@@ -992,6 +1007,10 @@ class Instaloader:
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param filename_target: Replacement for {target} in dirname_pattern and filename_pattern
         """
+
+        if format_string_contains_key(self.filename_pattern, 'post'):
+            raise InvalidArgumentException("The \"post\" keyword is not supported in the filename pattern when "
+                                           "downloading stories.")
 
         if not self.is_logged_in:
             raise LoginRequiredException('Login required to download stories')
@@ -1202,7 +1221,9 @@ class Instaloader:
     def get_profile_posts(self, profile_metadata: Dict[str, Any]) -> Iterator[Post]:
         """Retrieve all posts from a profile."""
         profile_name = profile_metadata['user']['username']
-        yield from (Post(self, node, profile=profile_name) for node in profile_metadata['user']['media']['nodes'])
+        profile_id = int(profile_metadata['user']['id'])
+        yield from (Post(self, node, profile=profile_name, profile_id=profile_id)
+                    for node in profile_metadata['user']['media']['nodes'])
         has_next_page = profile_metadata['user']['media']['page_info']['has_next_page']
         end_cursor = profile_metadata['user']['media']['page_info']['end_cursor']
         while has_next_page:
@@ -1213,7 +1234,8 @@ class Instaloader:
                                                           'after': end_cursor},
                                       'https://www.instagram.com/{0}/'.format(profile_name))
             media = data['data']['user']['edge_owner_to_timeline_media']
-            yield from (Post(self, edge['node'], profile=profile_name) for edge in media['edges'])
+            yield from (Post(self, edge['node'], profile=profile_name, profile_id=profile_id)
+                        for edge in media['edges'])
             has_next_page = media['page_info']['has_next_page']
             end_cursor = media['page_info']['end_cursor']
 
@@ -1442,7 +1464,7 @@ def main():
                              'flag is recommended when you use Instaloader to update your personal Instagram archive.')
     g_stop.add_argument('-c', '--count',
                         help='Do not attempt to download more than COUNT posts. '
-                             'Applies only to #hashtag, :feed-all and :feed-liked.')
+                             'Applies only to #hashtag and :feed.')
 
     g_login = parser.add_argument_group('Login (Download Private Profiles)',
                                         'Instaloader can login to Instagram. This allows downloading private profiles. '
@@ -1468,14 +1490,15 @@ def main():
                        help='Prefix of filenames. Posts are stored in the directory whose pattern is given with '
                             '--dirname-pattern. {profile} is replaced by the profile name, '
                             '{target} is replaced by the target you specified, i.e. either :feed, #hashtag or the '
-                            'profile name. Also, the fields date and shortcode can be specified. Defaults to '
-                            '\'{date:%%Y-%%m-%%d_%%H-%%M-%%S}\'.')
+                            'profile name. Also, the fields {date} and {shortcode} can be specified. In case of not '
+                            'downloading stories, the attributes of the Post class can be used in addition, e.g. '
+                            '{post.owner_id} or {post.mediaid}. Defaults to \'{date:%%Y-%%m-%%d_%%H-%%M-%%S}\'.')
     g_how.add_argument('--user-agent',
                        help='User Agent to use for HTTP requests. Defaults to \'{}\'.'.format(default_user_agent()))
     g_how.add_argument('-S', '--no-sleep', action='store_true', help=SUPPRESS)
     g_how.add_argument('--max-connection-attempts', metavar='N', type=int, default=3,
                        help='Maximum number of connection attempts until a request is aborted. Defaults to 3. If a '
-                            'connection fails, it can by manually skipped by hitting CTRL+C. Set this to 0 to retry '
+                            'connection fails, it can be manually skipped by hitting CTRL+C. Set this to 0 to retry '
                             'infinitely.')
 
     g_misc = parser.add_argument_group('Miscellaneous Options')
